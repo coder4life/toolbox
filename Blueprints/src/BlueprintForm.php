@@ -40,6 +40,21 @@ abstract class BlueprintForm implements \ArrayAccess, ExportInterface
     protected $dynamic = [];
 
     /**
+     * @var array
+     */
+    protected $stack = [];
+
+    /**
+     * @var array
+     */
+    protected $recurse_count = null;
+
+    /**
+     * @var array
+     */
+    protected $recurse_max_limit = 10;
+
+    /**
      * Load file and return its contents.
      *
      * @param string $filename
@@ -114,6 +129,32 @@ abstract class BlueprintForm implements \ArrayAccess, ExportInterface
     public function setOverrides($overrides)
     {
         $this->overrides = $overrides;
+
+        return $this;
+    }
+
+    /**
+     * Set file call stack for import@
+     *
+     * @param array $overrides
+     * @return $this
+     */
+    public function setCallStack($stack)
+    {
+        $this->stack = $stack;
+
+        return $this;
+    }
+
+    /**
+     * Set file call stack for import@
+     *
+     * @param array $overrides
+     * @return $this
+     */
+    public function setRecurseCount($recurse_count)
+    {
+        $this->recurse_count = $recurse_count;
 
         return $this;
     }
@@ -428,16 +469,36 @@ abstract class BlueprintForm implements \ArrayAccess, ExportInterface
     protected function doImport(&$value, array &$path)
     {
         $type = !is_string($value) ? !isset($value['type']) ? null : $value['type'] : $value;
-
         $files = $this->getFiles($type, isset($value['context']) ? $value['context'] : null);
 
         if (!$files) {
             return;
         }
 
+        /**
+         * IF stack is currently empty
+         *     SET recurse variable
+         *        IF recurse value is set, recurse variable is the recurse value
+         *        ELSE recurse value is not set, recurse variable is defaulted to 1
+         * ELSE IF check stack form the stack AND (recurse variable is set OR cycle variables is set)
+         *     THROW error stating that recurse and cycle variables cannot exist on a loop file itself
+         */
+        if(count($this->stack) == 0  && (isset($value['recurse']))) {
+            $this->setRecurseCount(isset($value['recurse']) ? $value['recurse'] : 1);
+        } elseif(array_search($this->stack, $files) && (isset($value['recurse']))) {
+            throw new \RuntimeException("Loop detected while importing blueprint file '{$files}'. Cycle import@ must 
+                have a recurse and cycle variables on a root field that is not the import@ file itself.");
+        }
+
         /** @var BlueprintForm $blueprint */
         $blueprint = new static($files);
-        $blueprint->setContext($this->context)->setOverrides($this->overrides)->load();
+
+        if(!is_null($this->recurse_count) && (count($this->stack) < $this->recurse_count)) {
+            $blueprint->setContext($this->context)->setOverrides($this->overrides)
+                ->setCallStack(array_merge($this->stack, $files))->setRecurseCount($this->recurse_count)->load();
+        } else {
+            $blueprint->setContext($this->context)->setOverrides($this->overrides)->load();
+        }
 
         $name = implode('/', $path);
 
